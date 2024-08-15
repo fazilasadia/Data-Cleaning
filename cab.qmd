@@ -1,0 +1,148 @@
+---
+title: "Exploratory Data Analysis of Taxi Trip Data"
+author: "Fazila Sadia"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    toc-location: right
+    number-sections: false
+    code-fold: false
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Introduction
+
+This report provides an exploratory data analysis (EDA) of the NYC Yellow Taxi data for January 2020. The dataset includes information on taxi trips, including pickup and dropoff times, locations, fare amounts, and payment types.
+
+# Load Required Libraries
+
+```{r}
+library(data.table)
+library(ggplot2)
+# library(dplyr)  # Additional library for data manipulation
+
+```
+
+
+# Load the data
+
+```{r}
+data <- fread("C:/Users/user/Downloads/yellow_tripdata_2020-01.csv")
+loc <- fread("C:/Users/user/Downloads/taxi+_zone_lookup.csv")
+
+
+
+
+# Display the first few rows of the dataset
+head(data)
+```
+
+# Handling Null and  Duplicated Values
+
+```{r}
+# Check for null values in each column
+null_counts <- data[, lapply(.SD, function(x) sum(is.na(x)))]
+print("Column-wise null values:")
+print(null_counts)
+
+# Decision: If null values are present, we decide to remove them because:
+# 1. Critical columns like fare_amount, trip_distance, or duration cannot have nulls without compromising the analysis.
+# 2. If a significant percentage of data is missing, you could also consider imputation instead of removal.
+# In this case, we'll remove rows with null values:
+df <- na.omit(data)
+
+# Check for duplicate rows
+duplicate_count <- data[duplicated(data)]
+print(paste("Number of duplicate rows:", nrow(duplicate_count)))
+
+# Decision: If there are duplicate rows, it might indicate redundant data collection or data entry errors.
+# We'll remove duplicates because they might bias our results:
+df <- unique(df)
+```
+
+
+# Convert datetime columns to POSIXct format
+
+```{r}
+df[, pickup := as.POSIXct(tpep_pickup_datetime, format = "%Y-%m-%d %H:%M:%S")]
+df[, dropoff := as.POSIXct(tpep_dropoff_datetime, format = "%Y-%m-%d %H:%M:%S")]
+ 
+invalid_times <- df[pickup > dropoff]
+print(paste("Number of records with invalid datetime sequences:", nrow(invalid_times)))
+
+# Calculate trip duration
+df[, duration := dropoff - pickup]
+```
+
+
+# Data Cleaning Steps:
+```{r}
+# 1. Filter out invalid passenger counts (e.g., 0 or extremely high numbers)
+df <- df[passenger_count > 0 & passenger_count <= 5]
+
+# 2. Filter out invalid or negative payment types and categorize them
+df[, payment_type := fcase(
+  payment_type == 1, "card",
+  payment_type == 2, "cash",
+  payment_type == 4, "dispute",
+  payment_type == 3, "no charge",
+  payment_type == 5, "unknown"
+)]
+
+# 3. Filter out invalid or negative trip distances and fare amounts
+df <- df[trip_distance > 0]
+df <- df[fare_amount > 0]
+df <- df[duration > 0]
+
+```
+
+
+# Replace Location IDs with Location Names
+```{r}
+# Merge to replace PULocationID and DOLocationID with Zone names
+
+df <- merge(
+  df, loc[, .(LocationID, PU_Zone = Zone)], 
+  by.x = "PULocationID", by.y = "LocationID", all.x = TRUE
+)
+
+df <- merge(
+  df, loc[, .(LocationID, DO_Zone = Zone)], 
+  by.x = "DOLocationID", by.y = "LocationID", all.x = TRUE
+)
+
+
+```
+
+
+# Handling Outliers Present in Data
+
+```{r}
+
+# Identifying and Handling Outliers using IQR
+# Outliers can distort our analysis, especially when it comes to metrics like average fare or trip duration.
+# We'll filter out extreme outliers using the IQR method.
+filter_by_iqr <- function(df, col_name) {
+  q1 <- df[, quantile(get(col_name), 0.25, na.rm = TRUE)]
+  q3 <- df[, quantile(get(col_name), 0.75, na.rm = TRUE)]
+  iqr <- q3 - q1
+  lower_bound <- q1 - 1.5 * iqr
+  upper_bound <- q3 + 1.5 * iqr
+  
+  # Filter data within bounds
+  df <- df[get(col_name) >= lower_bound & get(col_name) <= upper_bound]
+  return(df)
+}
+
+# Apply the filtering for relevant columns
+filtered_data <- df
+filtered_data <- filter_by_iqr(filtered_data, "duration")
+filtered_data <- filter_by_iqr(filtered_data, "fare_amount")
+filtered_data <- filter_by_iqr(filtered_data, "trip_distance")
+
+summary(filtered_data)
+```
